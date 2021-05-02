@@ -1,0 +1,159 @@
+---
+title: "Bayesian vs. Frequentist Data Analysis"
+author: "Joshua Cook"
+date: "5/3/2021"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(rstanarm)
+library(bayestestR)
+library(ggbeeswarm)
+library(tidyverse)
+
+theme_set(theme_classic(base_size = 12, base_family = "Arial"))
+set.seed(0)
+
+BACKGROUND_BLUE <- "#003462"
+```
+
+```{r}
+real_intercept <- 1
+real_slope <- 0.25
+real_sigma <- 0.2
+
+N <- 25
+a <- rnorm(N, mean = real_intercept, sd = real_sigma)
+b <- rnorm(N, mean = real_intercept + real_slope, sd = real_sigma)
+
+data <- tibble(A = a, B = b) %>%
+  pivot_longer(cols = everything(), names_to = "group", values_to = "value")
+head(data)
+```
+
+```{r}
+data %>%
+  ggplot(aes(x = group, y = value, color = group, fill = group)) +
+  geom_quasirandom() +
+  geom_boxplot(alpha = 0.25, outlier.color = NA) +
+  scale_color_brewer(type = "qual", palette = "Dark2") +
+  scale_fill_brewer(type = "qual", palette = "Dark2") +
+  theme(
+    text = element_text(color = "white"),
+    line = element_line(color = "white"),
+    axis.ticks = element_line(color = "white"),
+    axis.ticks.x = element_blank(),
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.line = element_line(color = "white"),
+    axis.text = element_text(color = "white"),
+    axis.text.x = element_text(size = 12, face = "bold", color = "white"),
+    panel.background = element_rect(fill = BACKGROUND_BLUE, color = NA),
+    plot.background = element_rect(fill = BACKGROUND_BLUE, color = NA)
+  ) +
+  labs(y = "measured value")
+```
+
+```{r}
+ggsave("images/boxplot.png", width = 2.4, height = 3, units = "in", dpi = 300)
+```
+
+```{r}
+t.test(value ~ group, data = data)
+```
+
+```{r}
+summary(aov(value ~ group, data = data))
+```
+
+
+```{r}
+freq_model <- lm(value ~ group, data = data)
+summary(freq_model)
+```
+
+```{r}
+confint(freq_model)
+```
+
+```{r}
+bayes_model <- stan_glm(value ~ group, data = data)
+```
+
+```{r}
+summary(bayes_model)
+```
+
+```{r}
+describe_posterior(bayes_model, ci = 0.95)
+```
+
+```{r}
+posteriors <- as.data.frame(bayes_model) %>%
+  as_tibble() %>%
+  janitor::clean_names()
+head(posteriors)
+```
+
+```{r}
+post_description <- as_tibble(describe_posterior(bayes_model, ci = 0.95)) %>%
+  janitor::clean_names() %>%
+  mutate(parameter = case_when(
+    parameter == "(Intercept)" ~ "intercept",
+    parameter == "groupB" ~ "slope"
+  ))
+
+poster_ci <- post_description %>%
+  select(parameter, ci_low, ci_high) %>%
+  pivot_longer(-parameter)
+```
+
+```{r}
+posteriors %>%
+  mutate(sample_id = row_number()) %>%
+  select(-sigma) %>%
+  pivot_longer(
+    -sample_id,
+    names_to = "parameter",
+    values_to = "posterior_sample"
+  ) %>%
+  mutate(parameter = case_when(
+    parameter == "group_b" ~ "slope",
+    TRUE ~ parameter
+  )) %>%
+  ggplot(aes(x = posterior_sample)) +
+  facet_wrap(vars(parameter), nrow = 1, scales = "free") +
+  geom_density(color = "#970E53", fill = "#970E53", ) +
+  geom_vline(
+    aes(xintercept = median),
+    data = post_description,
+    color = "#56C1FF",
+    alpha = 0.7
+  ) +
+  geom_vline(
+    aes(xintercept = value),
+    data = poster_ci,
+    linetype = 2,
+    color = "#56C1FF",
+    alpha = 0.7
+  ) +
+  scale_y_continuous(expand = expansion(c(0, 0.02))) +
+  theme(
+    strip.background = element_blank(),
+    strip.text = element_text(color = "white", face = "bold"),
+    text = element_text(color = "white"),
+    line = element_line(color = "white"),
+    axis.ticks = element_line(color = "white"),
+    legend.position = "none",
+    axis.line = element_line(color = "white"),
+    axis.text = element_text(color = "white"),
+    panel.background = element_rect(fill = BACKGROUND_BLUE, color = NA),
+    plot.background = element_rect(fill = BACKGROUND_BLUE, color = NA)
+  ) +
+  labs(x = "posterior estimate", y = "density")
+```
+```{r}
+ggsave("images/posteriors.png", width = 6, height = 2, units = "in")
+```
